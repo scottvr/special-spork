@@ -21,8 +21,8 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 log()  { echo "[$(date '+%F %T')] [*] $*"; }
 err()  { echo "[$(date '+%F %T')] [✗] $*" >&2; }
 
-if [[ "$(uname -r)" == "6.8.0-88-generic" ]] ; then
-  err "Already on correct kernel."
+if [[ -d "${STATE_DIR}" ]] ; then
+  err "This process should only be ran once.  Remove ${STATE_DIR} if you seriously want to rerun."
   exit 1
 fi
 
@@ -30,6 +30,25 @@ CODENAME=`lsb_release -cs`
 if [[ "${CODENAME}" != "noble" ]] ; then
   err "Only runs on ubuntu noble"
   exit 1
+fi
+
+running=$(uname -r)
+if [[ "${running}" == "6.8.0-88-generic" ]] ; then
+  err "Already on correct kernel."
+  exit 1
+fi
+
+latest=$(dpkg --list 'linux-image-[0-9]*' 2>/dev/null \
+    | awk '/^ii/ {print $2}' \
+    | sed 's/^linux-image-//' \
+    | sort -V \
+    | tail -n1)
+
+if [[ "$running" == "$latest" ]]; then
+    log "OK: Running the latest installed kernel ($running)"
+else
+    err "REBOOT NEEDED: Running $running, but $latest is installed"
+    exit 1
 fi
 
 if [[ $EUID -ne 0 ]]; then
