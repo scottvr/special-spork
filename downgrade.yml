@@ -1,0 +1,53 @@
+---
+- name: Kernel downgrade
+  hosts: all
+  gather_facts: false
+  become: true
+  serial: 1
+
+  vars:
+    remote_script_dir: /opt/kernel-migration
+
+  tasks:
+    - name: Create remote script directory
+      file:
+        path: "{{ remote_script_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy scripts
+      copy:
+        src: "{{ item }}"
+        dest: "{{ remote_script_dir }}/{{ item }}"
+        mode: "0750"
+      loop:
+        - downgrade.sh
+        - revert.sh
+        - kernel-grub-reset.sh
+
+    - name: Run downgrade script
+      command: "{{ remote_script_dir }}/downgrade.sh"
+      register: downgrade_result
+      changed_when: downgrade_result.rc == 0
+
+    - name: Reboot after successful downgrade
+      reboot:
+        reboot_timeout: 600
+        post_reboot_delay: 300
+        msg: "Rebooting to activate downgraded kernel"
+
+    - name: Check kernel version
+      command: uname -a
+      register: uname_out
+      changed_when: false
+
+    - name: Check memory
+      command: free
+      register: free_out
+      changed_when: false
+
+    - name: Show post-reboot results
+      debug:
+        msg:
+          - "{{ uname_out.stdout }}"
+          - "{{ free_out.stdout }}"
