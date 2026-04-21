@@ -21,6 +21,17 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 log()  { echo "[$(date '+%F %T')] [*] $*"; }
 err()  { echo "[$(date '+%F %T')] [✗] $*" >&2; }
 
+if [[ "$(uname -r)" == "6.8.0-88-generic" ]] ; then
+  err "Already on correct kernel."
+  exit 1
+fi
+
+CODENAME=`lsb_release -cs`
+if [[ "${CODENAME}" != "noble" ]] ; then
+  err "Only runs on ubuntu noble"
+  exit 1
+fi
+
 if [[ $EUID -ne 0 ]]; then
     err "Must run as root."
     exit 1
