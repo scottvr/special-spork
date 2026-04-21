@@ -33,7 +33,7 @@ if [[ "${CODENAME}" != "noble" ]] ; then
 fi
 
 running=$(uname -r)
-if [[ "${running}" == "${TARGET_VERSION}-generic" ]] ; then
+if [[ "${running}" == "${TARGET_KERNEL}" ]] ; then
   err "Already on correct kernel."
   exit 1
 fi
