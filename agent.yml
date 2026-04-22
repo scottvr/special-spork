@@ -7,8 +7,9 @@
   vars:
     # Override these on the command line with -e or in a vars file/vault.
     # Example: ansible-playbook aws_run_program.yml -e "program_name=my_script.sh"
-    program_name: "/home/jmasseo@office.local/aws-replication-installer-init"
+    program_name: "aws-replication-installer-init"
     program_args: "--no-prompt --region us-east-1"
+    homedir: "/home/jmasseo@office.local"
 
   vars_prompt:
     - name: aws_access_key_id
@@ -32,23 +33,23 @@
   tasks:
     - name: Verify the program exists in the user's home directory
       ansible.builtin.stat:
-        path: "{{ ansible_env.HOME }}/{{ program_name }}"
+        path: "{{ homedir }}/{{ program_name }}"
       register: program_stat
 
     - name: Fail if the program is missing
       ansible.builtin.fail:
-        msg: "Program '{{ program_name }}' not found in {{ ansible_env.HOME }}"
+        msg: "Program '{{ program_name }}' not found in {{ homedir }}"
       when: not program_stat.stat.exists
 
     - name: Ensure the program is executable
       ansible.builtin.file:
-        path: "{{ ansible_env.HOME }}/{{ program_name }}"
+        path: "{{ homedir }}/{{ program_name }}"
         mode: "0755"
 
     - name: Execute the program with AWS environment variables set
       ansible.builtin.command:
-        cmd: "./{{ program_name }} {{ program_args }}"
-        chdir: "{{ ansible_env.HOME }}"
+        cmd: "{{ homedir }}/{{ program_name }} {{ program_args }}"
+        chdir: "{{ homedir }}"
       environment:
         AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
         AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
