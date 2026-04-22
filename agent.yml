@@ -10,26 +10,11 @@
     program_name: "aws-replication-installer-init"
     program_args: "--no-prompt --region us-east-1"
     homedir: "/home/jmasseo@office.local"
-
-  vars_prompt:
-    - name: aws_access_key_id
-      prompt: "Enter AWS Access Key ID"
-      private: yes
-
-    - name: aws_secret_access_key
-      prompt: "Enter AWS Secret Access Key"
-      private: yes
-
-    - name: aws_default_region
-      prompt: "Enter AWS Default Region"
-      private: no
-      default: "us-east-1"
-
-    - name: aws_session_token
-      prompt: "Enter AWS Session Token (if using temporary credentials, otherwise leave blank)"
-      private: yes
-      default: ""
-
+    aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+    aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+    aws_session_token: "{{ lookup('env', 'AWS_SESSION_TOKEN') }}"
+    aws_default_region: "{{ lookup('env', 'AWS_DEFAULT_REGION') | default('us-east-1', true) }}"
+ 
   tasks:
     - name: Verify the program exists in the user's home directory
       ansible.builtin.stat:
