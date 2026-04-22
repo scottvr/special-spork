@@ -1,0 +1,68 @@
+---
+- name: Set AWS environment variables and execute program in user's home directory
+  hosts: all
+  gather_facts: yes
+  become: true
+
+  vars:
+    # Override these on the command line with -e or in a vars file/vault.
+    # Example: ansible-playbook aws_run_program.yml -e "program_name=my_script.sh"
+    program_name: "/home/jmasseo@office.local/aws-replication-installer-init"
+    program_args: "--no-prompt --region us-east-1"
+
+  vars_prompt:
+    - name: aws_access_key_id
+      prompt: "Enter AWS Access Key ID"
+      private: yes
+
+    - name: aws_secret_access_key
+      prompt: "Enter AWS Secret Access Key"
+      private: yes
+
+    - name: aws_default_region
+      prompt: "Enter AWS Default Region"
+      private: no
+      default: "us-east-1"
+
+    - name: aws_session_token
+      prompt: "Enter AWS Session Token (if using temporary credentials, otherwise leave blank)"
+      private: yes
+      default: ""
+
+  tasks:
+    - name: Verify the program exists in the user's home directory
+      ansible.builtin.stat:
+        path: "{{ ansible_env.HOME }}/{{ program_name }}"
+      register: program_stat
+
+    - name: Fail if the program is missing
+      ansible.builtin.fail:
+        msg: "Program '{{ program_name }}' not found in {{ ansible_env.HOME }}"
+      when: not program_stat.stat.exists
+
+    - name: Ensure the program is executable
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/{{ program_name }}"
+        mode: "0755"
+
+    - name: Execute the program with AWS environment variables set
+      ansible.builtin.command:
+        cmd: "./{{ program_name }} {{ program_args }}"
+        chdir: "{{ ansible_env.HOME }}"
+      environment:
+        AWS_ACCESS_KEY_ID: "{{ aws_access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ aws_secret_access_key }}"
+        AWS_SESSION_TOKEN: "{{ aws_session_token }}"
+        AWS_DEFAULT_REGION: "{{ aws_default_region }}"
+      register: program_result
+      changed_when: true
+
+    - name: Show program stdout
+      ansible.builtin.debug:
+        var: program_result.stdout_lines
+      when: program_result.stdout_lines | length > 0
+
+    - name: Show program stderr
+      ansible.builtin.debug:
+        var: program_result.stderr_lines
+      when: program_result.stderr_lines | length > 0
