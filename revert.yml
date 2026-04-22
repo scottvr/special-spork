@@ -1,0 +1,41 @@
+---
+- name: Kernel revert
+  hosts: all
+  gather_facts: false
+  become: true
+  serial: 1
+
+  vars:
+    remote_script_dir: /opt/kernel-migration
+
+  tasks:
+    - name: Run kernel-grub-reset script
+      command: "{{ remote_script_dir }}/kernel-grub-reset.sh"
+      register: grub_reset_result
+      changed_when: grub_reset_result.rc == 0
+
+    - name: Reboot after GRUB reset
+      reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 90
+        msg: "Rebooting to activate reset GRUB default"
+
+    - name: Run revert script
+      command: "{{ remote_script_dir }}/revert.sh"
+      register: revert_result
+      changed_when: revert_result.rc == 0
+
+    - name: Reboot after revert
+      reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 90
+        msg: "Rebooting after kernel revert"
+
+    - name: Check kernel version
+      command: uname -a
+      register: uname_out
+      changed_when: false
+
+    - name: Show kernel version
+      debug:
+        msg: "{{ uname_out.stdout }}"
