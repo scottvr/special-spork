@@ -3,7 +3,6 @@
   hosts: all
   gather_facts: false
   become: true
-  serial: 1
 
   vars:
     remote_script_dir: /opt/kernel-migration
