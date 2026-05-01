@@ -8,6 +8,7 @@
     # Override these on the command line with -e or in a vars file/vault.
     # Example: ansible-playbook aws_run_program.yml -e "program_name=my_script.sh"
     program_name: "aws-replication-installer-init"
+    program_url: "https://aws-application-migration-service-us-east-1.s3.us-east-1.amazonaws.com/latest/linux/aws-replication-installer-init"
     program_args: "--no-prompt --region us-east-1"
     homedir: "/home/jmasseo"
     aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
@@ -16,6 +17,12 @@
     aws_default_region: "{{ lookup('env', 'AWS_DEFAULT_REGION') | default('us-east-1', true) }}"
  
   tasks:
+    - name: Download the MGN installer to the user's home directory
+      ansible.builtin.get_url:
+        url: "{{ program_url }}"
+        dest: "{{ homedir }}/{{ program_name }}"
+        mode: "0755"
+
     - name: Verify the program exists in the user's home directory
       ansible.builtin.stat:
         path: "{{ homedir }}/{{ program_name }}"
