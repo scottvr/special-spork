@@ -94,3 +94,61 @@ Execute mode also needs:
 - It targets subnet IDs configured under
   `LaunchTemplateData.NetworkInterfaces[*].SubnetId`.
 - Run without `--execute` first and review the output before applying changes.
+
+# AWS MGN READY_FOR_TEST to READY_FOR_CUTOVER
+
+`scripts/mgn_ready_for_cutover.py` reviews AWS MGN source servers and changes
+servers whose lifecycle state is `READY_FOR_TEST` to `READY_FOR_CUTOVER`.
+
+The script is dry-run by default. It only calls `ChangeServerLifeCycleState` when
+`--execute` is supplied.
+
+## Execution plan
+
+1. Enumerate MGN source servers with `DescribeSourceServers`.
+2. Exclude archived servers unless `--include-archived` is supplied.
+3. Apply optional criteria: MGN application ID, source server ID regex, server
+   name regex, and exact tags.
+4. Report servers already in any lifecycle state other than `READY_FOR_TEST` as
+   skipped.
+5. In dry-run mode, report each server that would move to `READY_FOR_CUTOVER`.
+6. In execute mode, call `ChangeServerLifeCycleState` for each matched
+   `READY_FOR_TEST` server.
+
+## Examples
+
+Dry-run every non-archived source server:
+
+```powershell
+py scripts/mgn_ready_for_cutover.py `
+  --profile my-profile `
+  --region us-east-1
+```
+
+Execute only for servers tagged `MigrationWave=wave-4`:
+
+```powershell
+py scripts/mgn_ready_for_cutover.py `
+  --profile my-profile `
+  --region us-east-1 `
+  --tag MigrationWave=wave-4 `
+  --execute
+```
+
+Emit JSON for audit or review:
+
+```powershell
+py scripts/mgn_ready_for_cutover.py `
+  --region us-east-1 `
+  --output json
+```
+
+## Required IAM permissions
+
+The caller needs read permissions for MGN:
+
+- `mgn:DescribeSourceServers`
+
+Execute mode also needs:
+
+- `mgn:ChangeServerLifeCycleState`
