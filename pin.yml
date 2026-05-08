@@ -125,7 +125,7 @@
       failed_when: grub_entry_lookup.stdout | trim == ""
       check_mode: false
 
-    - name: stpre grub entry
+    - name: store grub entry
       ansible.builtin.set_fact:
         grub_default_entry: "{{ grub_entry_lookup.stdout | trim }}"
 
@@ -134,7 +134,6 @@
         set -euo pipefail
         k="{{ target_kernel_resolved }}"
         abi="{{ target_kernel_abi }}"
-
         (
           dpkg-query -W -f='${Package}\n' \
            'linux-image-*' \
@@ -312,13 +311,13 @@
         - nanme: resolve default to restore
           ansible.builtin.set_fact:
             grub_default_to_restore: >-
-            {{
-              (
-                restore_grub_default_slurp.content | default('') | b64decode | trim
-              )
-              if restore_grub_default_stat.stat.exists
-              else fallback_restore_to
-            }}
+              {{
+                (
+                  restore_grub_default_slurp.content | default('') | b64decode | trim
+                )
+                if restore_grub_default_stat.stat.exists
+                else fallback_restore_to
+              }}
         - name: restore default
           ansible.builtin.lineinfile:
             path: "{{ grub_defaults_file }}"
@@ -329,7 +328,7 @@
 
     - name: flush grub update before reboot
       ansible.builtin.meta: flush_handlers
-      when not audit_only | bool
+      when: not audit_only | bool
 
     - name: reboot 
       ansible.builtin.reboot:
@@ -358,4 +357,4 @@
 
   handlers: 
     - name: update grub
-      ansiuble.builtin.command: update-grub
+      ansible.builtin.command: update-grub
