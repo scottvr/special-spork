@@ -193,7 +193,7 @@
           ansible.builtin.shell: |
             set -euo pipefail
             if grep -q '^GRUB_DEFAULT=' "{{ grub_defaults_file }}"; then
-              sed -n 's//^GRUB_DEFAULT=//p' "{{ grub_defaults_file }}" | head -n 1
+              sed -n 's/^GRUB_DEFAULT=//p' "{{ grub_defaults_file }}" | head -n 1
             else
               printf '0\n'
             fi
