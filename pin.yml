@@ -201,7 +201,7 @@
             executable: /bin/bash
           register: current_grub_default_before_change
           changed_when: false
-          when: not grub_default_bhefore_stat.stat.exists
+          when: not grub_default_before_stat.stat.exists
         - name: record previous grub default ONCE
           ansible.builtin.copy:
             dest: "{{ state_dir }}/grub_default.before"
@@ -209,4 +209,4 @@
             owner: root
             group: root
             mode: "0600"
-          when: not grub_default_bhefore_stat.stat.exists
+          when: not grub_default_before_stat.stat.exists
