@@ -1,4 +1,6 @@
 ---
+# this probably would have been a quicker delivery and a safer execution in bash
+
 - name: Kernel pinning
   hosts: all
   gather_facts: false
@@ -6,18 +8,21 @@
   serial: 1
 
   vars:
+    # pin_state: name of some college or something, right?
     # present = pin previous kernel and set as grub default
     # absent = undo recorded hold and restore previous GRUB_DEFAULT
     pin_state: present
 
+    # Colonel O'Truth
     # "auto" = choose next to newest in /boot/vmlinuz*
     # or explicitly set e.g. '5.15.0-176-generic'
     target_kernel: auto
 
+    # 20 01 a sparse oddity
     # do-nothing mode
     audit_only: false
 
-    # reboot after this play?
+    # repost /boot
     reboot_post: false
 
 
@@ -61,7 +66,7 @@
 
     - name: store list
       ansible.builtin.set_fact:
-        installed_kernels: "{{ discovered_kernels }}"
+        installed_kernels: "{{ discovered_kernels.stdout_lines }}"
 
     - name: need at least two kernels for auto
       ansible.builtin.assert:
