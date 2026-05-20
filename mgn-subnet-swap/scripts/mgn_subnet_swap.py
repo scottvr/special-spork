@@ -32,9 +32,15 @@ def parse_args() -> argparse.Namespace:
             "subnet, and optionally create default template versions using a new subnet."
         )
     )
-    parser.add_argument("--region", help="AWS region. Uses normal boto3 resolution if omitted.")
-    parser.add_argument("--profile", help="AWS profile. Uses normal boto3 resolution if omitted.")
-    parser.add_argument("--from-subnet", required=True, help="Existing subnet ID to replace.")
+    parser.add_argument(
+        "--region", help="AWS region. Uses normal boto3 resolution if omitted."
+    )
+    parser.add_argument(
+        "--profile", help="AWS profile. Uses normal boto3 resolution if omitted."
+    )
+    parser.add_argument(
+        "--from-subnet", required=True, help="Existing subnet ID to replace."
+    )
     parser.add_argument("--to-subnet", required=True, help="Replacement subnet ID.")
     parser.add_argument(
         "--execute",
@@ -140,7 +146,9 @@ def get_launch_template_default(ec2_client, launch_template_id: str) -> dict[str
     )
     versions = response.get("LaunchTemplateVersions", [])
     if not versions:
-        raise RuntimeError(f"No default version found for launch template {launch_template_id}")
+        raise RuntimeError(
+            f"No default version found for launch template {launch_template_id}"
+        )
     return versions[0]
 
 
@@ -150,7 +158,7 @@ def source_server_names(server: dict[str, Any]) -> list[str]:
     if tags.get("Name"):
         names.append(str(tags["Name"]))
 
-    hints = ((server.get("sourceProperties") or {}).get("identificationHints") or {})
+    hints = (server.get("sourceProperties") or {}).get("identificationHints") or {}
     for key in ("hostname", "fqdn", "awsInstanceID"):
         value = hints.get(key)
         if value:
@@ -197,7 +205,9 @@ def replace_subnet_ids(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     changes: list[dict[str, Any]] = []
 
-    network_interfaces = copy.deepcopy(launch_template_data.get("NetworkInterfaces") or [])
+    network_interfaces = copy.deepcopy(
+        launch_template_data.get("NetworkInterfaces") or []
+    )
     for index, network_interface in enumerate(network_interfaces):
         if network_interface.get("SubnetId") == from_subnet:
             network_interface["SubnetId"] = to_subnet
@@ -310,7 +320,9 @@ def print_text_report(results: list[dict[str, Any]]) -> None:
         template_id = result.get("launchTemplateId") or "-"
         version = result.get("sourceVersion") or "-"
         names = ", ".join(result.get("names") or []) or "-"
-        print(f"{result['status']}: {source_id} names={names} lt={template_id} version={version}")
+        print(
+            f"{result['status']}: {source_id} names={names} lt={template_id} version={version}"
+        )
         if result.get("reason"):
             print(f"  reason: {result['reason']}")
         for change in result.get("changes") or []:
@@ -325,9 +337,13 @@ def main() -> int:
         raise SystemExit("--from-subnet and --to-subnet must be different")
 
     tag_filters = parse_tag_filters(args.tag)
-    source_id_re = compile_regex(args.source_server_id_regex, "--source-server-id-regex")
+    source_id_re = compile_regex(
+        args.source_server_id_regex, "--source-server-id-regex"
+    )
     name_re = compile_regex(args.server_name_regex, "--server-name-regex")
-    launch_template_id_re = compile_regex(args.launch_template_id_regex, "--launch-template-id-regex")
+    launch_template_id_re = compile_regex(
+        args.launch_template_id_regex, "--launch-template-id-regex"
+    )
 
     try:
         session = make_session(args)
@@ -357,7 +373,11 @@ def main() -> int:
                 continue
 
             try:
-                results.append(inspect_server(mgn_client, ec2_client, server, args, launch_template_id_re))
+                results.append(
+                    inspect_server(
+                        mgn_client, ec2_client, server, args, launch_template_id_re
+                    )
+                )
             except (BotoCoreError, ClientError, RuntimeError) as exc:
                 results.append(
                     {

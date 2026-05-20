@@ -14,7 +14,9 @@ from typing import Any
 
 try:
     from botocore.exceptions import ClientError
-except ImportError:  # pragma: no cover - allows --help before dependencies are installed.
+except (
+    ImportError
+):  # pragma: no cover - allows --help before dependencies are installed.
     ClientError = Exception  # type: ignore[misc,assignment]
 
 
@@ -38,7 +40,9 @@ def aws_session(profile: str | None, region: str | None) -> boto3.Session:
     try:
         import boto3
     except ImportError as exc:
-        raise RuntimeError("Missing dependency boto3. Install dependencies with: python -m pip install -r requirements.txt") from exc
+        raise RuntimeError(
+            "Missing dependency boto3. Install dependencies with: python -m pip install -r requirements.txt"
+        ) from exc
 
     kwargs: dict[str, str] = {}
     if profile:
@@ -97,7 +101,9 @@ class EC2Migrator:
         self.source_termination_protection: bool = False
 
     def run(self) -> MigrationResult:
-        logging.info("Starting migration for %s to %s", self.instance_id, self.target_az)
+        logging.info(
+            "Starting migration for %s to %s", self.instance_id, self.target_az
+        )
         source = self.validate_source()
         self.log_source_details(source)
         self.log_volume_details(source)
@@ -110,7 +116,9 @@ class EC2Migrator:
         logging.info("Source instance: %s", self.instance_id)
         logging.info("AMI created: %s", ami_id)
         logging.info("New instance: %s", new_instance_id)
-        return MigrationResult(self.instance_id, self.target_az, ami_id, new_instance_id)
+        return MigrationResult(
+            self.instance_id, self.target_az, ami_id, new_instance_id
+        )
 
     def validate_source(self) -> dict[str, Any]:
         logging.info("Validating source instance")
@@ -118,7 +126,9 @@ class EC2Migrator:
         source_az = source["Placement"]["AvailabilityZone"]
         state = source["State"]["Name"]
         if source_az == self.target_az:
-            raise ValueError(f"Source instance is already in target AZ {self.target_az}")
+            raise ValueError(
+                f"Source instance is already in target AZ {self.target_az}"
+            )
         if state in {"shutting-down", "terminated"}:
             raise ValueError(f"Source instance is in unsupported state {state}")
         self.source_instance = source
@@ -147,10 +157,13 @@ class EC2Migrator:
         logging.info("  Subnet: %s", source.get("SubnetId", "N/A"))
         logging.info(
             "  Security groups: %s",
-            ", ".join(sg["GroupId"] for sg in source.get("SecurityGroups", [])) or "N/A",
+            ", ".join(sg["GroupId"] for sg in source.get("SecurityGroups", []))
+            or "N/A",
         )
         if source.get("IamInstanceProfile"):
-            logging.info("  IAM instance profile: %s", source["IamInstanceProfile"]["Arn"])
+            logging.info(
+                "  IAM instance profile: %s", source["IamInstanceProfile"]["Arn"]
+            )
         logging.info("  User data: %s", "present" if self.source_userdata else "none")
         logging.info("  Termination protection: %s", self.source_termination_protection)
 
@@ -222,7 +235,9 @@ class EC2Migrator:
                     f"Subnet {self.target_subnet} is in {subnet['AvailabilityZone']}, not {self.target_az}"
                 )
             if subnet["VpcId"] != vpc_id:
-                raise ValueError(f"Subnet {self.target_subnet} is not in source VPC {vpc_id}")
+                raise ValueError(
+                    f"Subnet {self.target_subnet} is not in source VPC {vpc_id}"
+                )
             logging.info("Using requested target subnet %s", self.target_subnet)
             return self.target_subnet
 
@@ -246,7 +261,9 @@ class EC2Migrator:
             "MaxCount": 1,
             "InstanceType": source["InstanceType"],
             "SubnetId": self.target_subnet_id(source),
-            "SecurityGroupIds": [sg["GroupId"] for sg in source.get("SecurityGroups", [])],
+            "SecurityGroupIds": [
+                sg["GroupId"] for sg in source.get("SecurityGroups", [])
+            ],
             "DryRun": self.dry_run or ami_id == "ami-dryrun",
         }
         instance_tags = user_tags(source.get("Tags"))
@@ -261,7 +278,9 @@ class EC2Migrator:
         if source.get("EbsOptimized") is not None:
             kwargs["EbsOptimized"] = source["EbsOptimized"]
         if source.get("Monitoring"):
-            kwargs["Monitoring"] = {"Enabled": source["Monitoring"].get("State") == "enabled"}
+            kwargs["Monitoring"] = {
+                "Enabled": source["Monitoring"].get("State") == "enabled"
+            }
         if source.get("MetadataOptions"):
             metadata = source["MetadataOptions"]
             kwargs["MetadataOptions"] = {
@@ -306,7 +325,10 @@ class EC2Migrator:
         response = self.ec2.describe_tags(
             Filters=[{"Name": "resource-id", "Values": [resource_id]}]
         )
-        return [{"Key": tag["Key"], "Value": tag["Value"]} for tag in response.get("Tags", [])]
+        return [
+            {"Key": tag["Key"], "Value": tag["Value"]}
+            for tag in response.get("Tags", [])
+        ]
 
     def sync_resource_tags(
         self,
@@ -315,7 +337,10 @@ class EC2Migrator:
         label: str,
     ) -> None:
         desired = {tag["Key"]: tag["Value"] for tag in user_tags(desired_tags)}
-        current = {tag["Key"]: tag["Value"] for tag in user_tags(self.describe_resource_tags(resource_id))}
+        current = {
+            tag["Key"]: tag["Value"]
+            for tag in user_tags(self.describe_resource_tags(resource_id))
+        }
 
         extra_keys = sorted(key for key in current if key not in desired)
         tags_to_set = [
@@ -361,7 +386,9 @@ class EC2Migrator:
                 f"snapshot tags from source volume {source_volume_id}",
             )
 
-    def sync_related_tags(self, source: dict[str, Any], target_id: str, ami_id: str) -> None:
+    def sync_related_tags(
+        self, source: dict[str, Any], target_id: str, ami_id: str
+    ) -> None:
         if target_id == "i-dryrun":
             return
         self.sync_resource_tags(target_id, source.get("Tags"), "instance")
@@ -389,7 +416,9 @@ class EC2Migrator:
             if eni.get("Attachment", {}).get("DeviceIndex") is not None
         }
         for eni in target.get("NetworkInterfaces", []):
-            source_eni_id = source_enis.get(eni.get("Attachment", {}).get("DeviceIndex"))
+            source_eni_id = source_enis.get(
+                eni.get("Attachment", {}).get("DeviceIndex")
+            )
             target_eni_id = eni.get("NetworkInterfaceId")
             if not source_eni_id or not target_eni_id:
                 continue
@@ -399,7 +428,11 @@ class EC2Migrator:
                 f"network interface tags from source ENI {source_eni_id}",
             )
 
-        logging.info("Completed tag synchronization for AMI %s and replacement instance %s", ami_id, target_id)
+        logging.info(
+            "Completed tag synchronization for AMI %s and replacement instance %s",
+            ami_id,
+            target_id,
+        )
 
     def describe_new_instance(self, instance_id: str) -> None:
         if instance_id == "i-dryrun":
@@ -444,7 +477,8 @@ def validate_instance(args: argparse.Namespace) -> int:
         logging.info("Subnet: %s", instance.get("SubnetId", "N/A"))
         logging.info(
             "Security groups: %s",
-            ", ".join(sg["GroupId"] for sg in instance.get("SecurityGroups", [])) or "N/A",
+            ", ".join(sg["GroupId"] for sg in instance.get("SecurityGroups", []))
+            or "N/A",
         )
         logging.info("Validation log: %s", log_file)
         return 0
@@ -467,7 +501,9 @@ def update_dns(args: argparse.Namespace) -> int:
 
         zone_name = clean_name(args.hosted_zone)
         record_name = clean_name(args.record_name)
-        zones = route53.list_hosted_zones_by_name(DNSName=zone_name).get("HostedZones", [])
+        zones = route53.list_hosted_zones_by_name(DNSName=zone_name).get(
+            "HostedZones", []
+        )
         zone = next((z for z in zones if clean_name(z["Name"]) == zone_name), None)
         if not zone:
             raise ValueError(f"Hosted zone {zone_name} was not found")
@@ -476,7 +512,11 @@ def update_dns(args: argparse.Namespace) -> int:
             HostedZoneId=zone["Id"], StartRecordName=record_name, StartRecordType="A"
         )["ResourceRecordSets"]
         existing = next(
-            (r for r in record_sets if clean_name(r["Name"]) == record_name and r["Type"] == "A"),
+            (
+                r
+                for r in record_sets
+                if clean_name(r["Name"]) == record_name and r["Type"] == "A"
+            ),
             None,
         )
         ttl = args.ttl or (existing.get("TTL") if existing else 300)
@@ -535,7 +575,12 @@ def cleanup(args: argparse.Namespace) -> int:
             ],
         )["Images"]
         for image in images:
-            logging.info("Migration AMI %s: %s, %s", image["ImageId"], image["Name"], image["State"])
+            logging.info(
+                "Migration AMI %s: %s, %s",
+                image["ImageId"],
+                image["Name"],
+                image["State"],
+            )
 
         if args.ami_id:
             image = ec2.describe_images(ImageIds=[args.ami_id])["Images"][0]
@@ -563,7 +608,9 @@ def cleanup(args: argparse.Namespace) -> int:
             logging.info("Terminating source instance %s", args.instance_id)
             if not args.dry_run:
                 ec2.terminate_instances(InstanceIds=[args.instance_id])
-                ec2.get_waiter("instance_terminated").wait(InstanceIds=[args.instance_id])
+                ec2.get_waiter("instance_terminated").wait(
+                    InstanceIds=[args.instance_id]
+                )
 
         logging.info("Cleanup log: %s", log_file)
         return 0
@@ -594,16 +641,24 @@ def migrate(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Migrate EC2 instances between Availability Zones")
+    parser = argparse.ArgumentParser(
+        description="Migrate EC2 instances between Availability Zones"
+    )
     parser.add_argument("--profile", default=None, help="AWS profile name")
     parser.add_argument("--region", default=None, help="AWS region")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     def add_aws_options(command_parser: argparse.ArgumentParser) -> None:
-        command_parser.add_argument("--profile", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
-        command_parser.add_argument("--region", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+        command_parser.add_argument(
+            "--profile", default=argparse.SUPPRESS, help=argparse.SUPPRESS
+        )
+        command_parser.add_argument(
+            "--region", default=argparse.SUPPRESS, help=argparse.SUPPRESS
+        )
 
-    migrate_parser = subparsers.add_parser("migrate", help="Create an AMI and launch a replacement instance")
+    migrate_parser = subparsers.add_parser(
+        "migrate", help="Create an AMI and launch a replacement instance"
+    )
     add_aws_options(migrate_parser)
     migrate_parser.add_argument("--instance-id", required=True)
     migrate_parser.add_argument("--target-az", required=True)
@@ -616,7 +671,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     migrate_parser.set_defaults(func=migrate)
 
-    validate_parser = subparsers.add_parser("validate", help="Validate a migrated instance")
+    validate_parser = subparsers.add_parser(
+        "validate", help="Validate a migrated instance"
+    )
     add_aws_options(validate_parser)
     validate_parser.add_argument("--instance-id", required=True)
     validate_parser.set_defaults(func=validate_instance)
@@ -626,12 +683,16 @@ def build_parser() -> argparse.ArgumentParser:
     dns_parser.add_argument("--hosted-zone", required=True)
     dns_parser.add_argument("--record-name", required=True)
     dns_parser.add_argument("--instance-id", required=True)
-    dns_parser.add_argument("--ip-type", choices=("private", "public"), default="private")
+    dns_parser.add_argument(
+        "--ip-type", choices=("private", "public"), default="private"
+    )
     dns_parser.add_argument("--ttl", type=int, default=None)
     dns_parser.add_argument("--dry-run", action="store_true")
     dns_parser.set_defaults(func=update_dns)
 
-    cleanup_parser = subparsers.add_parser("cleanup", help="Inventory and optionally remove migration resources")
+    cleanup_parser = subparsers.add_parser(
+        "cleanup", help="Inventory and optionally remove migration resources"
+    )
     add_aws_options(cleanup_parser)
     cleanup_parser.add_argument("--instance-id", required=True)
     cleanup_parser.add_argument("--ami-id", default=None)
@@ -647,7 +708,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if getattr(args, "stop_instance", False) and getattr(args, "terminate_instance", False):
+    if getattr(args, "stop_instance", False) and getattr(
+        args, "terminate_instance", False
+    ):
         parser.error("--stop-instance and --terminate-instance are mutually exclusive")
     return args.func(args)
 

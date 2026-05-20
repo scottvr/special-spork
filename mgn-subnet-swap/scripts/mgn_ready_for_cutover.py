@@ -33,8 +33,12 @@ def parse_args() -> argparse.Namespace:
             "READY_FOR_TEST lifecycle state to READY_FOR_CUTOVER."
         )
     )
-    parser.add_argument("--region", help="AWS region. Uses normal boto3 resolution if omitted.")
-    parser.add_argument("--profile", help="AWS profile. Uses normal boto3 resolution if omitted.")
+    parser.add_argument(
+        "--region", help="AWS region. Uses normal boto3 resolution if omitted."
+    )
+    parser.add_argument(
+        "--profile", help="AWS profile. Uses normal boto3 resolution if omitted."
+    )
     parser.add_argument(
         "--account-id",
         help="MGN account ID to pass to ChangeServerLifeCycleState. Usually omitted.",
@@ -138,7 +142,7 @@ def source_server_names(server: dict[str, Any]) -> list[str]:
     if tags.get("Name"):
         names.append(str(tags["Name"]))
 
-    hints = ((server.get("sourceProperties") or {}).get("identificationHints") or {})
+    hints = (server.get("sourceProperties") or {}).get("identificationHints") or {}
     for key in ("hostname", "fqdn", "awsInstanceID"):
         value = hints.get(key)
         if value:
@@ -194,7 +198,9 @@ def result_base(server: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def change_to_ready_for_cutover(mgn_client, server: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+def change_to_ready_for_cutover(
+    mgn_client, server: dict[str, Any], args: argparse.Namespace
+) -> dict[str, Any]:
     result = result_base(server)
     source_server_id = server["sourceServerID"]
 
@@ -217,7 +223,9 @@ def change_to_ready_for_cutover(mgn_client, server: dict[str, Any], args: argpar
 
     response = mgn_client.change_server_life_cycle_state(**request)
     result["status"] = "updated"
-    result["newLifeCycleState"] = source_server_lifecycle_state(response) or READY_FOR_CUTOVER
+    result["newLifeCycleState"] = (
+        source_server_lifecycle_state(response) or READY_FOR_CUTOVER
+    )
     return result
 
 
@@ -246,7 +254,9 @@ def main() -> int:
     args = parse_args()
 
     tag_filters = parse_tag_filters(args.tag)
-    source_id_re = compile_regex(args.source_server_id_regex, "--source-server-id-regex")
+    source_id_re = compile_regex(
+        args.source_server_id_regex, "--source-server-id-regex"
+    )
     name_re = compile_regex(args.server_name_regex, "--server-name-regex")
 
     try:
