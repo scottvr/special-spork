@@ -1,0 +1,339 @@
+---
+- name: Audit or remediate local host identity mappings in hosts files
+  hosts: all
+  gather_facts: true
+
+  vars:
+    # audit: fail if changes would be needed
+    # remediate: rewrite managed local-identity mappings
+    hosts_reconcile_state: audit
+
+    unix_hosts_file: /etc/hosts
+    unix_backup_dir: /var/backups
+
+    # Extra local hostnames (aliases) treated as this machine's identity.
+    additional_unix_identity_hostnames: []
+
+    # Optional additional static lines to manage in the hosts block.
+    # Example:
+    # additional_unix_managed_lines:
+    #   - "10.10.10.50 jumpbox.local jumpbox"
+    additional_unix_managed_lines: []
+
+    include_unix_1270011_entry: true
+    include_unix_primary_ip_entry: true
+    include_unix_ipv6_local_entries: true
+
+    windows_hosts_file: C:\Windows\System32\drivers\etc\hosts
+    windows_backup_dir: C:\Windows\System32\drivers\etc
+    additional_windows_identity_hostnames: []
+
+  tasks:
+    - name: Validate reconcile state
+      ansible.builtin.assert:
+        that:
+          - hosts_reconcile_state in ['audit', 'remediate']
+        fail_msg: "hosts_reconcile_state must be 'audit' or 'remediate'"
+
+    - name: Build Unix identity hostnames
+      ansible.builtin.set_fact:
+        unix_identity_hostnames: >-
+          {{
+            ([ansible_hostname | default(''), ansible_fqdn | default('')] + additional_unix_identity_hostnames)
+            | map('lower')
+            | map('trim')
+            | reject('equalto', '')
+            | unique
+            | list
+          }}
+      when: ansible_system != "Win32NT"
+
+    - name: Initialize Unix managed hosts lines
+      ansible.builtin.set_fact:
+        unix_managed_lines:
+          - "127.0.0.1 localhost"
+      when: ansible_system != "Win32NT"
+
+    - name: Add IPv6 localhost lines to Unix managed hosts lines
+      ansible.builtin.set_fact:
+        unix_managed_lines: >-
+          {{
+            unix_managed_lines
+            + [
+              '::1 localhost ip6-localhost ip6-loopback',
+              'ff02::1 ip6-allnodes',
+              'ff02::2 ip6-allrouters'
+            ]
+          }}
+      when:
+        - ansible_system != "Win32NT"
+        - include_unix_ipv6_local_entries | bool
+
+    - name: Add 127.0.1.1 local identity line for Unix
+      ansible.builtin.set_fact:
+        unix_managed_lines: "{{ unix_managed_lines + ['127.0.1.1 ' ~ (unix_identity_hostnames | join(' '))] }}"
+      when:
+        - ansible_system != "Win32NT"
+        - include_unix_1270011_entry | bool
+        - unix_identity_hostnames | length > 0
+
+    - name: Add primary IPv4 local identity line for Unix
+      ansible.builtin.set_fact:
+        unix_managed_lines: "{{ unix_managed_lines + [ansible_default_ipv4.address ~ ' ' ~ (unix_identity_hostnames | join(' '))] }}"
+      when:
+        - ansible_system != "Win32NT"
+        - include_unix_primary_ip_entry | bool
+        - ansible_default_ipv4 is defined
+        - ansible_default_ipv4.address is defined
+        - ansible_default_ipv4.address | length > 0
+        - unix_identity_hostnames | length > 0
+
+    - name: Add custom Unix managed hosts lines
+      ansible.builtin.set_fact:
+        unix_managed_lines: "{{ unix_managed_lines + additional_unix_managed_lines }}"
+      when:
+        - ansible_system != "Win32NT"
+        - additional_unix_managed_lines | length > 0
+
+    - name: Normalize Unix managed hosts lines
+      ansible.builtin.set_fact:
+        unix_managed_lines: "{{ unix_managed_lines | map('trim') | reject('equalto', '') | unique | list }}"
+      when: ansible_system != "Win32NT"
+
+    - name: Audit or remediate Unix hosts local identity mappings
+      ansible.builtin.shell: |
+        set -euo pipefail
+        file="{{ unix_hosts_file }}"
+        state="{{ hosts_reconcile_state }}"
+        backup_dir="{{ unix_backup_dir }}"
+        marker_begin="# BEGIN ANSIBLE LOCAL HOSTS MANAGED"
+        marker_end="# END ANSIBLE LOCAL HOSTS MANAGED"
+
+        [ -f "$file" ] || { echo "STATUS=SKIP file-missing"; exit 0; }
+
+        tmp="$(mktemp)"
+        trap 'rm -f "$tmp"' EXIT
+
+        awk \
+          -v marker_begin="$marker_begin" \
+          -v marker_end="$marker_end" \
+          -v managed_hosts_csv="{{ unix_identity_hostnames | join(',') }}" '
+          BEGIN {
+            in_block = 0
+            n = split(managed_hosts_csv, managed_arr, ",")
+            for (i = 1; i <= n; i++) {
+              if (managed_arr[i] != "") {
+                managed[tolower(managed_arr[i])] = 1
+              }
+            }
+          }
+          {
+            raw = $0
+            if (raw == marker_begin) {
+              in_block = 1
+              next
+            }
+            if (raw == marker_end) {
+              in_block = 0
+              next
+            }
+            if (in_block == 1) {
+              next
+            }
+
+            line = raw
+            sub(/[[:space:]]*#.*/, "", line)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            if (line == "") {
+              print raw
+              next
+            }
+
+            count = split(line, parts, /[[:space:]]+/)
+            if (count < 2) {
+              print raw
+              next
+            }
+
+            for (i = 2; i <= count; i++) {
+              h = tolower(parts[i])
+              if (h in managed) {
+                next
+              }
+            }
+
+            print raw
+          }
+        ' "$file" > "$tmp"
+
+        {
+          echo "$marker_begin"
+          {% for line in unix_managed_lines %}
+          echo '{{ line | replace("'", "'\"'\"'") }}'
+          {% endfor %}
+          echo "$marker_end"
+        } >> "$tmp"
+
+        if cmp -s "$file" "$tmp"; then
+          echo "STATUS=OK"
+          exit 0
+        fi
+
+        if [ "$state" = "audit" ]; then
+          echo "STATUS=DIFF"
+          diff -u "$file" "$tmp" || true
+          exit 2
+        fi
+
+        mkdir -p "$backup_dir"
+        ts="$(date +%Y%m%d%H%M%S)"
+        backup_file="$backup_dir/hosts.pre-reconcile.$ts"
+        cp -a "$file" "$backup_file"
+        cp "$tmp" "$file"
+        chmod 0644 "$file"
+
+        echo "STATUS=REMEDIATED"
+        echo "BACKUP_FILE=$backup_file"
+        diff -u "$backup_file" "$file" || true
+      args:
+        executable: /bin/bash
+      become: true
+      register: unix_reconcile_result
+      changed_when:
+        - ansible_system != "Win32NT"
+        - hosts_reconcile_state == "remediate"
+        - "'STATUS=REMEDIATED' in unix_reconcile_result.stdout"
+      failed_when: false
+      when: ansible_system != "Win32NT"
+
+    - name: Fail in audit mode when Unix reconciliation changes are required
+      ansible.builtin.fail:
+        msg: |
+          Unix hosts file needs reconciliation.
+          State: {{ hosts_reconcile_state }}
+          Managed lines:
+          {{ unix_managed_lines | join('\n') }}
+          Diff:
+          {{ unix_reconcile_result.stdout }}
+      when:
+        - ansible_system != "Win32NT"
+        - hosts_reconcile_state == "audit"
+        - unix_reconcile_result.rc == 2
+
+    - name: Report Unix reconciliation status
+      ansible.builtin.debug:
+        msg: "{{ unix_reconcile_result.stdout_lines }}"
+      when: ansible_system != "Win32NT"
+
+    - name: Build Windows identity hostnames
+      ansible.builtin.set_fact:
+        windows_identity_hostnames: >-
+          {{
+            ([ansible_hostname | default(''), ansible_fqdn | default('')] + additional_windows_identity_hostnames)
+            | map('lower')
+            | map('trim')
+            | reject('equalto', '')
+            | unique
+            | list
+          }}
+      when: ansible_system == "Win32NT"
+
+    - name: Audit or remediate Windows hosts local identity mappings
+      ansible.windows.win_shell: |
+        $state = '{{ hosts_reconcile_state }}'
+        $hostsFile = '{{ windows_hosts_file }}'
+        $backupDir = '{{ windows_backup_dir }}'
+        $markerBegin = '# BEGIN ANSIBLE LOCAL HOSTS MANAGED'
+        $markerEnd = '# END ANSIBLE LOCAL HOSTS MANAGED'
+
+        if (-not (Test-Path -LiteralPath $hostsFile)) {
+          Write-Output 'STATUS=SKIP file-missing'
+          exit 0
+        }
+
+        $managed = @(
+          {% for host in windows_identity_hostnames %}
+          '{{ host | replace("'", "''") }}'{% if not loop.last %},{% endif %}
+          {% endfor %}
+        )
+
+        $output = New-Object System.Collections.Generic.List[string]
+        $inBlock = $false
+
+        Get-Content -LiteralPath $hostsFile | ForEach-Object {
+          $raw = $_
+          if ($raw -eq $markerBegin) { $inBlock = $true; return }
+          if ($raw -eq $markerEnd) { $inBlock = $false; return }
+          if ($inBlock) { return }
+
+          $line = ($raw -replace '\s*#.*$', '').Trim()
+          if ([string]::IsNullOrWhiteSpace($line)) { $output.Add($raw); return }
+
+          $parts = $line -split '\s+'
+          if ($parts.Count -lt 2) { $output.Add($raw); return }
+
+          $drop = $false
+          for ($i = 1; $i -lt $parts.Count; $i++) {
+            if ($managed -contains $parts[$i].ToLowerInvariant()) {
+              $drop = $true
+              break
+            }
+          }
+
+          if (-not $drop) { $output.Add($raw) }
+        }
+
+        $output.Add($markerBegin)
+        $output.Add('127.0.0.1 localhost')
+        if ($managed.Count -gt 0) {
+          $output.Add(('127.0.0.1 {0}' -f ($managed -join ' ')))
+        }
+        $output.Add($markerEnd)
+
+        $currentText = ((Get-Content -LiteralPath $hostsFile -Raw) -replace "`r`n", "`n") -replace "`n$", ''
+        $newText = $output -join "`n"
+        if ($currentText -eq $newText) {
+          Write-Output 'STATUS=OK'
+          exit 0
+        }
+
+        if ($state -eq 'audit') {
+          Write-Output 'STATUS=DIFF'
+          Compare-Object -ReferenceObject ($currentText -split "`n") -DifferenceObject ($newText -split "`n") -SyncWindow 0 | ForEach-Object {
+            Write-Output ("DIFF={0}:{1}" -f $_.SideIndicator, $_.InputObject)
+          }
+          exit 2
+        }
+
+        New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+        $ts = Get-Date -Format 'yyyyMMddHHmmss'
+        $backupFile = Join-Path $backupDir ("hosts.pre-reconcile.{0}" -f $ts)
+        Copy-Item -LiteralPath $hostsFile -Destination $backupFile -Force
+        Set-Content -LiteralPath $hostsFile -Value $output -Encoding Ascii
+
+        Write-Output 'STATUS=REMEDIATED'
+        Write-Output ('BACKUP_FILE={0}' -f $backupFile)
+      register: windows_reconcile_result
+      changed_when:
+        - ansible_system == "Win32NT"
+        - hosts_reconcile_state == "remediate"
+        - "'STATUS=REMEDIATED' in windows_reconcile_result.stdout"
+      failed_when: false
+      when: ansible_system == "Win32NT"
+
+    - name: Fail in audit mode when Windows reconciliation changes are required
+      ansible.builtin.fail:
+        msg: |
+          Windows hosts file needs reconciliation.
+          State: {{ hosts_reconcile_state }}
+          Diff:
+          {{ windows_reconcile_result.stdout }}
+      when:
+        - ansible_system == "Win32NT"
+        - hosts_reconcile_state == "audit"
+        - windows_reconcile_result.rc == 2
+
+    - name: Report Windows reconciliation status
+      ansible.builtin.debug:
+        msg: "{{ windows_reconcile_result.stdout_lines }}"
+      when: ansible_system == "Win32NT"

@@ -1,0 +1,277 @@
+---
+- name: Audit hosts file entries against an allowlist
+  hosts: all
+  gather_facts: true
+
+  vars:
+    # Additional hostnames allowed on any IP (escape hatch).
+    # Example: -e 'additional_allowed_hosts=["legacy-alias","jumpbox.local"]'
+    additional_allowed_hosts: []
+
+    # Additional expected fixed mappings for Unix-like systems.
+    # Each item must include:
+    #   ip: "x.x.x.x" (or IPv6)
+    #   hostnames: ["name1", "name2"]
+    # Example:
+    #   -e 'additional_expected_unix_entries=[{"ip":"10.1.2.3","hostnames":["app01","app01.example.com"]}]'
+    additional_expected_unix_entries: []
+
+    # Enable common expected Unix mappings derived from facts.
+    include_unix_1270011_entry: true
+    include_unix_primary_ip_entry: true
+    include_unix_ipv6_local_entries: true
+
+    unix_hosts_file: /etc/hosts
+
+    # Windows files sometimes used for static name mappings.
+    windows_hosts_files:
+      - C:\Windows\System32\drivers\etc\hosts
+      - C:\Windows\System32\drivers\etc\hosts.sam
+      - C:\Windows\System32\drivers\etc\lmhosts
+      - C:\Windows\System32\drivers\etc\lmhosts.sam
+
+  tasks:
+    - name: Initialize expected Unix entries with localhost
+      ansible.builtin.set_fact:
+        unix_expected_entries_effective:
+          - ip: "127.0.0.1"
+            hostnames:
+              - localhost
+      when: ansible_system != "Win32NT"
+
+    - name: Add common IPv6 localhost entries for Unix
+      ansible.builtin.set_fact:
+        unix_expected_entries_effective: >-
+          {{
+            unix_expected_entries_effective
+            + [
+              {'ip': '::1', 'hostnames': ['localhost', 'ip6-localhost', 'ip6-loopback']},
+              {'ip': 'ff02::1', 'hostnames': ['ip6-allnodes']},
+              {'ip': 'ff02::2', 'hostnames': ['ip6-allrouters']}
+            ]
+          }}
+      when:
+        - ansible_system != "Win32NT"
+        - include_unix_ipv6_local_entries | bool
+
+    - name: Add 127.0.1.1 hostname/FQDN entry for Unix
+      ansible.builtin.set_fact:
+        unix_expected_entries_effective: >-
+          {{
+            unix_expected_entries_effective
+            + [
+              {
+                'ip': '127.0.1.1',
+                'hostnames': (
+                  [ansible_hostname | default(''), ansible_fqdn | default('')]
+                  | reject('equalto', '')
+                  | map('lower')
+                  | unique
+                  | list
+                )
+              }
+            ]
+          }}
+      when:
+        - ansible_system != "Win32NT"
+        - include_unix_1270011_entry | bool
+        - ansible_hostname | default('') | length > 0
+
+    - name: Add primary interface IP hostname/FQDN entry for Unix
+      ansible.builtin.set_fact:
+        unix_expected_entries_effective: >-
+          {{
+            unix_expected_entries_effective
+            + [
+              {
+                'ip': ansible_default_ipv4.address,
+                'hostnames': (
+                  [ansible_hostname | default(''), ansible_fqdn | default('')]
+                  | reject('equalto', '')
+                  | map('lower')
+                  | unique
+                  | list
+                )
+              }
+            ]
+          }}
+      when:
+        - ansible_system != "Win32NT"
+        - include_unix_primary_ip_entry | bool
+        - ansible_default_ipv4 is defined
+        - ansible_default_ipv4.address is defined
+        - ansible_default_ipv4.address | length > 0
+        - ansible_hostname | default('') | length > 0
+
+    - name: Add user-defined Unix expected entries
+      ansible.builtin.set_fact:
+        unix_expected_entries_effective: "{{ unix_expected_entries_effective + additional_expected_unix_entries }}"
+      when:
+        - ansible_system != "Win32NT"
+        - additional_expected_unix_entries | length > 0
+
+    - name: Build normalized Unix expected IP/hostname pairs
+      ansible.builtin.set_fact:
+        unix_expected_pairs: >-
+          {%- set out = [] -%}
+          {%- for entry in (unix_expected_entries_effective | default([])) -%}
+          {%- set ip = (entry.ip | string | lower | trim) -%}
+          {%- for host in (entry.hostnames | default([])) -%}
+          {%- set h = (host | string | lower | trim) -%}
+          {%- if ip | length > 0 and h | length > 0 -%}
+          {%- set _ = out.append(ip ~ '|' ~ h) -%}
+          {%- endif -%}
+          {%- endfor -%}
+          {%- endfor -%}
+          {{ out | unique }}
+      when: ansible_system != "Win32NT"
+
+    - name: Build normalized Unix any-IP hostname allowlist
+      ansible.builtin.set_fact:
+        unix_allowed_hosts_any_ip: "{{ additional_allowed_hosts | map('lower') | map('trim') | reject('equalto', '') | unique | list }}"
+      when: ansible_system != "Win32NT"
+
+    - name: Build Windows hostname allowlist
+      ansible.builtin.set_fact:
+        windows_allowed_hosts: "{{ (['localhost'] + additional_allowed_hosts) | map('lower') | map('trim') | reject('equalto', '') | unique | list }}"
+      when: ansible_system == "Win32NT"
+
+    - name: Find unexpected entries in Unix hosts file
+      ansible.builtin.shell: |
+        set -euo pipefail
+        file="{{ unix_hosts_file }}"
+        [ -f "$file" ] || exit 0
+
+        awk \
+          -v expected_pairs_csv="{{ unix_expected_pairs | join(',') }}" \
+          -v allow_any_host_csv="{{ unix_allowed_hosts_any_ip | join(',') }}" \
+          -v f="$file" '
+          BEGIN {
+            n = split(expected_pairs_csv, a, ",")
+            for (i = 1; i <= n; i++) {
+              expected[a[i]] = 1
+            }
+
+            m = split(allow_any_host_csv, b, ",")
+            for (i = 1; i <= m; i++) {
+              allow_any[tolower(b[i])] = 1
+            }
+          }
+          {
+            raw = $0
+            sub(/\r$/, "", raw)
+            line = raw
+            sub(/[[:space:]]*#.*/, "", line)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
+            if (line == "") {
+              next
+            }
+
+            count = split(line, parts, /[[:space:]]+/)
+            if (count < 2) {
+              next
+            }
+
+            for (i = 2; i <= count; i++) {
+              ip = tolower(parts[1])
+              h = tolower(parts[i])
+              key = ip "|" h
+              if ((h in allow_any) || (key in expected)) {
+                continue
+              } else {
+                printf "%s:%d:%s\n", f, NR, raw
+                next
+              }
+            }
+          }
+        ' "$file"
+      args:
+        executable: /bin/bash
+      register: unix_unexpected_hosts_entries
+      changed_when: false
+      failed_when: false
+      when: ansible_system != "Win32NT"
+
+    - name: Find unexpected entries in Windows hosts files
+      ansible.windows.win_shell: |
+        $allowed = @(
+          {% for host in windows_allowed_hosts %}
+          '{{ host | replace("'", "''") }}'{% if not loop.last %},{% endif %}
+          {% endfor %}
+        )
+
+        $files = @(
+          {% for file in windows_hosts_files %}
+          '{{ file | replace("'", "''") }}'{% if not loop.last %},{% endif %}
+          {% endfor %}
+        )
+
+        $unexpected = @()
+
+        foreach ($file in $files) {
+          if (-not (Test-Path -LiteralPath $file)) {
+            continue
+          }
+
+          $lineNo = 0
+          Get-Content -LiteralPath $file | ForEach-Object {
+            $lineNo++
+            $raw = $_
+            $line = ($raw -replace '\s*#.*$', '').Trim()
+            if (-not [string]::IsNullOrWhiteSpace($line)) {
+              $parts = $line -split '\s+'
+              if ($parts.Count -ge 2) {
+                for ($i = 1; $i -lt $parts.Count; $i++) {
+                  $host = $parts[$i].ToLowerInvariant()
+                  if (-not ($allowed -contains $host)) {
+                    $unexpected += ('{0}:{1}:{2}' -f $file, $lineNo, $raw)
+                    break
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        $unexpected -join "`n"
+      register: windows_unexpected_hosts_entries
+      changed_when: false
+      failed_when: false
+      when: ansible_system == "Win32NT"
+
+    - name: Fail when unexpected entries are found on Unix-like hosts
+      ansible.builtin.fail:
+        msg: |
+          Unexpected hosts entries detected.
+          Expected IP/hostname pairs: {{ unix_expected_pairs | join(', ') }}
+          Additional any-IP hostnames: {{ unix_allowed_hosts_any_ip | join(', ') | default('(none)', true) }}
+          Offending lines:
+          {{ unix_unexpected_hosts_entries.stdout }}
+      when:
+        - ansible_system != "Win32NT"
+        - unix_unexpected_hosts_entries.stdout | trim | length > 0
+
+    - name: Fail when unexpected entries are found on Windows hosts
+      ansible.builtin.fail:
+        msg: |
+          Unexpected hosts entries detected.
+          Allowed hostnames: {{ windows_allowed_hosts | join(', ') }}
+          Offending lines:
+          {{ windows_unexpected_hosts_entries.stdout }}
+      when:
+        - ansible_system == "Win32NT"
+        - windows_unexpected_hosts_entries.stdout | trim | length > 0
+
+    - name: Report compliant Unix hosts file
+      ansible.builtin.debug:
+        msg: "No unexpected hosts entries found. Expected pairs: {{ unix_expected_pairs | join(', ') }}. Any-IP allowed hosts: {{ unix_allowed_hosts_any_ip | join(', ') | default('(none)', true) }}"
+      when:
+        - ansible_system != "Win32NT"
+        - unix_unexpected_hosts_entries.stdout | default('') | trim | length == 0
+
+    - name: Report compliant Windows hosts files
+      ansible.builtin.debug:
+        msg: "No unexpected hosts entries found. Allowed hostnames: {{ windows_allowed_hosts | join(', ') }}"
+      when:
+        - ansible_system == "Win32NT"
+        - windows_unexpected_hosts_entries.stdout | default('') | trim | length == 0
